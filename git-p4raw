@@ -1231,7 +1231,7 @@ sub derive_extra_parents {
 		     map { @$_ } map { values %$_ }
 		     values %$chg_info ) {
 			$all_headrev = 1;
-			$o_change = $prev->{$source_path};
+			$o_change = $prev->{$source_path} || $change;
 		}
 
 		# prepare a list of relative paths that are integrated
@@ -3062,16 +3062,17 @@ SQL
 
 			my $contents = get_rcs($rcs_file, $rcs_revision);
 
-			my ($found_md5, $found_md5_alt);
+			my $found_md5;
 			# don't do the md5 check on +k files
 			if ( $has_md5 and
 			     !($row->{file_type}&P4_TYPE_KORRUPT)
-			   ) {
+                ) {
+                # Canonicalize text file line endings for MD5 calculations.
+                if (_p4_type($row->{file_type}) =~ m/text/) {
+                  $contents =~ s/\R/\n/g;
+                }
 				$found_md5 = lc(md5_hex($contents));
-                $contents =~ s/\R/\n/g;
-				$found_md5_alt = lc(md5_hex($contents));
-				if ( $found_md5 ne $lc_md5 &&
-                     $found_md5_alt ne $lc_md5 ) {
+				if ( $found_md5 ne $lc_md5) {
 					# we fall over in a screaming heap
 					die("MD5 mismatch on $depotpath"
 					    ."#$rev ($rcs_file "
@@ -4200,7 +4201,12 @@ abort "no action given" unless $action;
 $action =~ s{-}{_}g;
 abort "bad action/argument `$action'" unless defined &{"do_$action"};
 
-my $dbh = DBI->connect("dbi:Pg:dbname=gitp4raw", "scottbyer", "bluedog") or barf "DBI connect failed";
+my $pg_dbname = "";
+$pg_dbname = "dbname=$ENV{PG_DBNAME}" if ($ENV{PG_DBNAME});
+my $pg_user = $ENV{PG_USER} || "";
+my $pg_passwd = $ENV{PG_PASSWD} || "";
+
+my $dbh = DBI->connect("dbi:Pg:$pg_dbname", "$pg_user", "$pg_passwd") or barf "DBI connect failed";
 $dbh->{RaiseError}=1;
 $dbh->{PrintError}=1;
 $dbh->{AutoCommit}=1;
