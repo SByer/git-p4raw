@@ -1873,10 +1873,9 @@ SQL
 
 		my @cols = keys %$row;
 		$add_parent_sth = $dbh->prepare(<<SQL);
-insert into change_parents
-	(${\(join ", ", @cols)})
-values
-	(${\(join ", ", ("?") x @cols)})
+INSERT INTO change_parents(
+    ${\(join ", ", @cols)})
+  VALUES (${\(join ", ", ("?") x @cols)});
 SQL
 		my @row;
 		for my $col ( @cols ) {
@@ -1891,9 +1890,9 @@ SQL
 	my $add_change_branch_sth;
 	my $add_change_branch = $o->{add_change_branch} ||= sub {
 		$add_change_branch_sth ||= $dbh->prepare(<<SQL);
-insert into change_branches
-	(branchpath, change)
-values (?, ?)
+INSERT INTO change_branches(
+            branchpath, change)
+  VALUES (?, ?);
 SQL
 		mutter "saving new branch path: @_";
 		$add_change_branch_sth->execute(@_);
@@ -1907,9 +1906,12 @@ SQL
 		$change_parents->($row);
 	};
 	# derive extra parents if necessary
-        for my $path ( sort keys %by_path_chg_obj ) {
+    for my $path ( sort keys %by_path_chg_obj ) {
 		$add_change_branch->($path, $change)
 			unless $curr_paths{$path};
+    }
+
+    for my $path ( sort keys %by_path_chg_obj ) {
 		my $PcO = $by_path_chg_obj{$path};
 		$show_change_detail->($path, $PcO);
 		my $POc = $by_path_obj_chg{$path};
@@ -1918,7 +1920,7 @@ SQL
 			$parents = [ grep { $_->{manual} } @$parents ];
 		}
 		if ( $know_parents ) {
-			for ( @$parents ) {
+		for ( @$parents ) {
 				$show_parent->($_);
 			}
 		}
@@ -2850,10 +2852,9 @@ sub gfi_checkpoint {
 	}
 
 	my $insert_mark_sth = $dbh->prepare(<<SQL);
-insert into marks
-	(mark, commitid, blobid)
-values
-	(?, ?, ?)
+INSERT INTO marks(
+    mark, commitid, blobid)
+  VALUES (?, ?, ?);
 SQL
 	my $b_t = $MARK_TYPES{blob};
 	my $c_t = $MARK_TYPES{commit};
@@ -3022,10 +3023,9 @@ where
 SQL
 
 	my $insert_rev_mark_row = $dbh->prepare(<<SQL);
-insert into
-	rev_marks (depotpath, revision, mark)
-values
-	(?, ?, ?)
+INSERT INTO	rev_marks(
+    depotpath, revision, mark)
+  VALUES (?, ?, ?);
 SQL
 
 	mutter "now exporting file images";
@@ -3409,10 +3409,9 @@ and	closed = 1
 SQL
 
 	my $insert_commit_mark_sth = $dbh->prepare(<<SQL);
-insert into change_marks
-	(branchpath, change, mark)
-values
-	(?, ?, ?)
+INSERT INTO change_marks(
+    branchpath, change, mark)
+  VALUES (?, ?, ?);
 SQL
 
 	say "gathering export plan";
@@ -3929,18 +3928,16 @@ SQL
 		for my $graft ( @places ) {
 			if ( ref $graft ) {
 				$dbh->do(<<SQL,undef,@$top,@$graft);
-insert into change_parents
-	(branchpath, change, parent_branchpath, parent_change)
-values
-	(?, ?, ?, ?)
+INSERT INTO change_parents(
+    branchpath, change, parent_branchpath, parent_change)
+  VALUES (?, ?, ?, ?);
 SQL
 			}
 			else {
 				$dbh->do(<<SQL,undef,@$top,$graft);
-insert into change_parents
-	(branchpath, change, ref)
-values
-	(?, ?, ?)
+INSERT INTO change_parents(
+    branchpath, change, ref)
+  VALUES (?, ?, ?);
 SQL
 			}
 		}
@@ -4023,7 +4020,7 @@ sub do_recover {
 	$dbh->do("set constraints all deferred");
 	$dbh->do("set transaction isolation level serializable");
 	my $create_sth = $dbh->prepare(<<SQL);
-insert into change_branches (branchpath, change) values (?, ?)
+INSERT INTO change_branches(branchpath, change) VALUES (?, ?);
 SQL
 	my $check_cb_sth = $dbh->prepare(<<SQL);
 select count(*) from change_branches where branchpath = ? and change = ?
@@ -4037,10 +4034,10 @@ SQL
 	my $new_mark = sub { Q($dbh, $mark_sth) };
 
 	my $insert_change_mark_sth = $dbh->prepare(<<SQL);
-insert into change_marks (branchpath, change, mark) values (?, ?, ?)
+INSERT INTO change_marks(branchpath, change, mark) VALUES (?, ?, ?);
 SQL
 	my $insert_mark_sth = $dbh->prepare(<<SQL);
-insert into marks (mark, commitid) values (?, ?)
+INSERT INTO marks(mark, commitid) VALUES (?, ?);
 SQL
 	my $find_commit_sth = $dbh->prepare(<<SQL);
 select
@@ -4056,17 +4053,15 @@ where
 	commitid = ?
 SQL
 	my $insert_change_parent_sth = $dbh->prepare(<<SQL);
-insert into change_parents
-	(branchpath, change, parent_branchpath, parent_change)
-values
-	(?, ?, ?, ?)
+INSERT INTO change_parents(
+    branchpath, change, parent_branchpath, parent_change)
+  VALUES (?, ?, ?, ?);
 SQL
 
 	my $insert_change_parent_ref_sth = $dbh->prepare(<<SQL);
-insert into change_parents
-	(branchpath, change, ref)
-values
-	(?, ?, ?)
+INSERT INTO change_parents(
+    branchpath, change, ref)
+  VALUES (?, ?, ?);
 SQL
 	my $delete_change_parents = $dbh->prepare(<<SQL);
 delete from change_parents
