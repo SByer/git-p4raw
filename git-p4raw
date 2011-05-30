@@ -1726,10 +1726,10 @@ SQL
 		if ( keys %paths ) {
 			my $re = join("|",sort { length($b)<=>length($a) }
 				      map{"\Q$_\E"} keys %paths);
-			$path_re = qr{$re};
+			$path_re = qr{^(?>($re))(?:/[^/]*+)$};
 		}
 		else {
-			$path_re = qr{(?!.)};
+			$path_re = qr{^((?!.))/};
 		}
 	};
 	$add_path->();
@@ -1742,15 +1742,19 @@ SQL
 		# no integrations are happening between files with
 		# different names!
 		my $path = $row->{depotpath};
-		unless ( $path =~ m{^($path_re)/} ) {
+		unless ( $path =~ m{$path_re} ) {
 			# new path, add to paths
 			$path =~ s{/[^/]*$}{};
 			if ( $row->{int_obj} and
-			     $row->{int_obj} =~ m{^($path_re)/} ) {
-				$path = substr $row->{depotpath}, 0,
-					length($row->{depotpath}) -
-					(length($row->{int_obj}) -
-					 length $1);
+			     $row->{int_obj} =~ m{$path_re} ) {
+              my $int_root = $1;
+              my $base = substr $row->{int_obj},
+                (length($int_root) - length($row->{int_obj}) + 1);
+              my $alt_path = substr $row->{depotpath}, 0,
+                (length($row->{depotpath}) -
+                 (length($row->{int_obj}) -
+                  length $int_root));
+              $path = $alt_path if $row->{depotpath} =~ m{\Q$base\E$};
 			}
 			elsif ( $row->{int_obj} ) {
 				$path = diff_right($row->{int_obj},
@@ -1767,13 +1771,13 @@ SQL
 	};
 
 	# remove the paths that shadow each other.
-	my @gonners = grep { m{^($path_re)/} } keys %paths;
+	my @gonners = grep { m{$path_re} } keys %paths;
 	if ( @gonners ) {
 		for my $gonner ( @gonners ) {
 			if ( $prev_paths{$gonner} ) {
 				# this new change would appear to shadow others.
 				# so, nuke it.
-				if ( $gonner =~ m{^($path_re)/} ) {
+				if ( $gonner =~ m{$path_re} ) {
 					my $culprit = $1;
 					moan "$culprit shadows branches: "
 						.join(" ", grep m{^\Q$culprit\E/},
@@ -1797,7 +1801,7 @@ SQL
 		{ no warnings;
 		#whisper "row: $row->{depotpath} $row->{change_title} $row->{int_obj}";
 	  }
-		my ($path) = ($row->{depotpath} =~ m{^($path_re)/})
+		my ($path) = ( $row->{depotpath} =~ m{$path_re} )
 			or do {
 				moan "$row->{depotpath} will NOT be imported";
 				next;
@@ -1805,7 +1809,7 @@ SQL
 
 		my $op = "";
 		if ( $row->{int_obj} &&
-		     $row->{int_obj} =~ m{^($path_re)/} ) {
+		     $row->{int_obj} =~ m{$path_re} ) {
 			$op = $1;
 		}
 		elsif ( $row->{int_obj} ) {
