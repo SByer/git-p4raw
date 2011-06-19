@@ -1184,7 +1184,7 @@ sub derive_branch_src {
 
 sub derive_extra_parents {
 	my $dbh = shift;
-	my $path = shift;
+	my $in_path = shift;
 	my $change = shift;
 	my $PcO = shift;
 	my $POc = {%{+shift}};
@@ -1192,7 +1192,7 @@ sub derive_extra_parents {
 	my $callback = shift;
 
 	my $root_changes = delete $POc->{""};
-	my $confused_changes = delete $POc->{$path};
+	my $confused_changes = delete $POc->{$in_path};
 	my $has_changes = !!($root_changes || $confused_changes);
 	my @extra;
 	push @extra, evil => 1 if $has_changes;
@@ -1200,7 +1200,7 @@ sub derive_extra_parents {
 	# warn for octopus and evil merges
 	if ( keys %$POc > 1 ) {
 		print( ($has_changes ? "Shoggoth" : "Octopus")
-		       ." merge of: @{[map { $_||$path} keys %$POc]}\n" );
+		       ." merge of: @{[map { $_||$in_path} keys %$POc]}\n" );
 		push @extra, octopus => 1;
 	}
 	elsif ( !keys %$POc ) {
@@ -1212,9 +1212,9 @@ sub derive_extra_parents {
 
 	my $manual;
 	my @parents =
-		{ branchpath => $path,
-		  parent_branchpath => $path,
-		  parent_change => $prev->{$path},
+		{ branchpath => $in_path,
+		  parent_branchpath => $in_path,
+		  parent_change => $prev->{$in_path},
 		  manual => 0 };
 
 	my @ignored;
@@ -1222,7 +1222,13 @@ sub derive_extra_parents {
 	# add all parents
 	while ( my ($source_path, $chg_info) = each %$POc ) {
 
+      next if ! %$chg_info;
+
 		my @extra_per_src;
+        my $path = $in_path;
+        my $p_change = $prev->{$path};
+        # If everything is a 'delete', it's probably a move.
+        my $move = ! grep { ! /delete/ } keys %$chg_info;
 		my ($all_headrev, $none_unseen, $o_change );
 		$o_change = max map { $_->{int_subj_max_change}||-1 }
 			map { @$_ } map { values %$_ }
@@ -1231,13 +1237,22 @@ sub derive_extra_parents {
 		     map { @$_ } map { values %$_ }
 		     values %$chg_info ) {
 			$all_headrev = 1;
-			$o_change = $prev->{$source_path} || $change;
+			$o_change = $prev->{$source_path};
 		}
+
+        # If the change is missing and this is a move - it means things are a
+        # little backwards - it's a rename. Try and rationalize that now.
+        if (!$o_change && $move) {
+          $path = $source_path;
+          $p_change = $change;
+          $source_path = $in_path;
+          $o_change = $prev->{$source_path};
+        }
 
 		# prepare a list of relative paths that are integrated
 		# by this change.
 		my %integrated;
-		my $integed_c;
+		my $integed_c = 0;
 		my %revcx_by_relpath;
 		while ( my ($type, $c_d) = each %{$POc->{$source_path}} ) {
 			for my $revcx ( @{ $c_d->{revcxs} } ) {
@@ -1251,11 +1266,13 @@ sub derive_extra_parents {
 		# now here's the fancy-pants stuff.  Find the merge base...
 		my (@mb) = find_merge_base
 			($dbh,
-			 [ $path, $prev->{$path} ],
+			 [ $path, $p_change ],
 			 [ $source_path, $o_change ]);
-		print "merge base of $path\@$prev->{$path} and "
+		print "merge base of $path\@$p_change and "
 			.("$source_path\@$o_change is "
 			  ."@{[ map { join '@', @$_ } @mb ]}\n");
+
+        next if ($move && !$mb[1]);
 
 		# ... then try a 3-way merge with each of the merge bases ...
 		my $left = index_for_version($dbh, $path, $change);
@@ -1388,6 +1405,7 @@ SQL
 			print "Confirmed $count differences all integrated - it's a merge!\n";
 		}
 		else {
+          next if $move;
 			my $seen = keys %integrated;
 			my $unseen = keys %unseen;
 			my $total = $seen + $unseen;
@@ -1634,6 +1652,8 @@ sub change_stats {
 						  $c_d->{int_change})."), ";
 				}
 				print scalar(@{$c_d->{revcxs}})," file(s)";
+                print "\n\t" . join ("\n\t", 
+                    map { $_->{depotpath} } @{$c_d->{revcxs}}) if $VERBOSE;
 				print "\n";
 				if ( $o->{long} ) {
 					for my $c ( @{$c_d->{revcxs}} ) {
@@ -1726,7 +1746,7 @@ SQL
 		if ( keys %paths ) {
 			my $re = join("|",sort { length($b)<=>length($a) }
 				      map{"\Q$_\E"} keys %paths);
-			$path_re = qr{^(?>($re))(?:/[^/]*+)$};
+            $path_re = qr{^($re)/};
 		}
 		else {
 			$path_re = qr{^((?!.))/};
@@ -3410,6 +3430,7 @@ from
 where
 	change between ? and ?
 and	closed = 1
+order by change
 SQL
 
 	my $insert_commit_mark_sth = $dbh->prepare(<<SQL);
@@ -3467,8 +3488,9 @@ SQL
 		}
 		# and put the change back!
 		$desc_i->($desc);
-		die "wrong change!"
-			if $desc->{change} != $change_br->{change};
+        if ( $desc->{change} != $change_br->{change} ) {
+          die "wrong change!"
+        }
 
 		my ($author, $committer, $description)
 			= make_commit($desc, @parents);
@@ -3806,6 +3828,7 @@ our $PREFIX = $ENV{GIT_P4RAW_PREFIX} || "p4";
 sub _path2ref {
         my $branchpath = shift;
         $branchpath =~ s{^//(?:depot/)?}{$PREFIX/};
+        $branchpath =~ s{ }{_}g;
         #$branchpath =~ s{/}{/}g;
         "refs/heads/$branchpath";
 }
