@@ -1671,6 +1671,32 @@ sub change_stats {
 		print "\n";
 	};
 
+	my $add_change_branch_sth;
+	my $add_change_branch = $o->{add_change_branch} ||= sub {
+		$add_change_branch_sth ||= $dbh->prepare(<<SQL);
+INSERT INTO change_branches(
+            branchpath, change)
+  VALUES (?, ?);
+SQL
+		mutter "saving new branch path: @_";
+		$add_change_branch_sth->execute(@_);
+	};
+
+    # This collects shadowing branches in case they're what the user wants.
+    my $add_shadow = sub {
+      if ( @_ && $_[1] ) {
+        # Delete wthings we have that are subdirectories of the new
+        # thing. Don't add the new thing if it's a subdirectory of something we
+        # already have. I can also see an argument for just adding everything
+        # and letting the user sort it out.
+        grep { m{^\Q$_[0]\E/} and delete ${$_[1]}{$_} } keys %{$_[1]};
+        if ( grep { $_[0] =~ m{^\Q$_\E/} } keys %{$_[1]} ) {
+          return undef;
+        }
+        ${$_[1]}{$_[0]} ||= undef;
+      }
+    };
+
 	goto no_header if !ref $show_header;
 	my $sth = $dbh->prepare(<<SQL);
 select
@@ -1810,6 +1836,7 @@ SQL
 						      @gonners);
 					delete $paths{$1};
 					$add_path->();
+                    $add_shadow->($culprit, $o->{shadow_paths})
 				}
 			}
 			else {
@@ -1917,17 +1944,6 @@ SQL
 			if $VERBOSE >= 1;
 		$add_parent_sth->execute(@row);
 	};
-	my $add_change_branch_sth;
-	my $add_change_branch = $o->{add_change_branch} ||= sub {
-		$add_change_branch_sth ||= $dbh->prepare(<<SQL);
-INSERT INTO change_branches(
-            branchpath, change)
-  VALUES (?, ?);
-SQL
-		mutter "saving new branch path: @_";
-		$add_change_branch_sth->execute(@_);
-	};
-
 	my @ncp;
 	my $new_change_parents = sub {
 		my $row = shift;
@@ -2665,6 +2681,7 @@ sub parse_export_opts {
 		       "l|long" => \$export_opts{long},
 		       "recalc" => \$export_opts{derive_again},
 		       "automatic|a" => \$FULLY_AUTOMATIC,
+               "shadow=s@" => \$export_opts{shadows},
 		      );
 		@_ = @ARGV;
 	}
@@ -3144,17 +3161,43 @@ sub do_find_branches {
 	# "close enough" :)
 	my %export_opts = parse_export_opts($dbh, "branches", @_);
 
+	my $add_change_branch_sth;
+	my $add_change_branch = sub {
+		$add_change_branch_sth ||= $dbh->prepare(<<'SQL');
+INSERT INTO change_branches(branchpath, change)
+SELECT $1,$2
+WHERE NOT EXISTS(
+    SELECT branchpath, change FROM change_branches
+    WHERE branchpath=$1 AND change=$2)
+SQL
+		mutter "saving new branch path: @_";
+		$add_change_branch_sth->execute(@_);
+	};
+    
+    if ( $export_opts{shadows} ) {
+      for my $shadow ( @{ $export_opts{shadows} } ) {
+        $add_change_branch->($shadow, $export_opts{min});
+      }
+    }
+
+    my %shadow_paths;
 	say "finding branches for $export_opts{chunk_size} changes";
 	for my $change ( $export_opts{min} .. $export_opts{max} ) {
 		$dbh->begin_work;
 		change_stats($dbh, $change,
 			     { compact => !$export_opts{long},
 			       derive_again => $export_opts{derive_again},
+                   shadow_paths => \%shadow_paths,
 			     },
 			    );
 		print "\n";
 		$dbh->commit;
 	}
+
+    for my $shadow (keys %shadow_paths) {
+      moan "Branch '$shadow' had dropped file because it shadowed "
+          ."previously seen paths. Consider using the --shadow switch.";
+    }
 }
 
 sub check_branchpath {
